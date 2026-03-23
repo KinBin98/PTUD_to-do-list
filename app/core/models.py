@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -26,6 +26,8 @@ class Todo(Base):
     title = Column(String(100), nullable=False)
     description = Column(String(500), nullable=True)
     is_done = Column(Boolean, default=False)
+    due_date = Column(DateTime, nullable=True)  # Optional deadline
+    tags = Column(JSON, default=list, nullable=False)  # List of tags: ["work", "urgent"]
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

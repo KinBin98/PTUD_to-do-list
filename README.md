@@ -1,12 +1,12 @@
 # To-Do List API - Progressive Development Guide
 
-API quản lý công việc xây dựng theo **5 cấp độ** từ cơ bản đến nâng cao.
+API quản lý công việc xây dựng theo **6 cấp độ** từ cơ bản đến nâng cao.
 
-> **Status**: ✅ Hoàn tất Cấp 1-5 | **30 tests** | **0 warnings**
+> **Status**: ✅ Hoàn tất Cấp 1-6 | **45 tests** (30 + 15) | **0 warnings**
 
 ---
 
-## 📊 5 Cấp Độ
+## 📊 6 Cấp Độ
 
 | Cấp | Tên | Tính Năng | Status |
 |-----|-----|----------|--------|
@@ -15,6 +15,7 @@ API quản lý công việc xây dựng theo **5 cấp độ** từ cơ bản đ
 | **3** | Layered Architecture | Router/Service/Repository, config, clean code | ✓ |
 | **4** | Database + ORM | SQLAlchemy, SQLite, timestamps, PATCH | ✓ |
 | **5** | Authentication | JWT, multi-user, todo ownership | ✓ |
+| **6** | Advanced Features | due_date, tags, overdue/today endpoints | ✓ |
 
 ---
 
@@ -38,26 +39,51 @@ uvicorn main:app --reload
 ### **Unit Tests (Khuyến nghị)** ⭐
 
 ```bash
-# Chạy tất cả 30 tests
+# Chạy tất cả tests: 45 tests (30 Cấp 1-5 + 15 Cấp 6)
 pytest test_todos.py -v
 
 # Chạy theo cấp độ
 pytest test_todos.py::TestAuthentication -v         # Cấp 5: Auth (10 tests)
 pytest test_todos.py::TestValidation -v             # Cấp 2: Validation (4 tests)
-pytest test_todos.py::TestFilterSearchSort -v        # Cấp 2: Filter/Sort (5 tests)
 pytest test_todos.py::TestDatabase -v               # Cấp 4: Database (6 tests)
-pytest test_todos.py::TestUserOwnership -v          # Cấp 5: User Isolation (5 tests)
+pytest test_todos.py::TestLevel6Advanced -v         # Cấp 6: Advanced (15 tests)
 
 # Chi tiết
-pytest test_todos.py -vv
-pytest test_todos.py::TestAuthentication::test_register_valid -v
+pytest test_todos.py::TestLevel6Advanced::test_create_todo_with_due_date -v
 ```
 
-**Result**: ✓ 30/30 PASSED | ~3 seconds
+**Result**: ✓ 45/45 PASSED | Cấp 1-6 hoàn tất | ~3.5 seconds
 
 ---
 
 ### **Manual Test (cURL)**
+
+**Cấp 6 - Advanced Features (due_date, tags)**
+```bash
+# Tạo todo với deadline
+curl -X POST http://localhost:8000/api/v1/todos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Complete project",
+    "due_date": "2026-03-25T23:59:59",
+    "tags": ["urgent", "work"]
+  }'
+
+# Lấy todo quá hạn
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/todos/overdue
+
+# Lấy todo hôm nay
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/todos/today
+
+# Cập nhật tags
+curl -X PATCH http://localhost:8000/api/v1/todos/1 \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tags": ["high-priority", "backend"]}'
+```
 
 **Cấp 2 - Validation**
 ```bash
@@ -152,6 +178,8 @@ curl -H "Authorization: Bearer $TOKEN_B" \
 | `title` | Bắt buộc, 3-100 chars | "Learn FastAPI" ✓ |
 | `description` | Tùy chọn, max 500 chars | "Framework..." |
 | `is_done` | Boolean (default: false) | true / false |
+| `due_date` | Tùy chọn, ISO datetime | "2026-03-25T23:59:59" |
+| `tags` | Danh sách tag (default: []) | ["work", "urgent"] |
 | `limit` | 1-100 (default: 10) | 5 ✓, 200 ✗ |
 | `offset` | ≥ 0 (default: 0) | 0 ✓, -1 ✗ |
 
@@ -166,12 +194,14 @@ curl -H "Authorization: Bearer $TOKEN_B" \
 | GET | `/api/v1/auth/me` | 5 |
 | POST | `/api/v1/todos` | 1-5 * |
 | GET | `/api/v1/todos` | 2-5 * |
+| GET | `/api/v1/todos/overdue` | 6 * |
+| GET | `/api/v1/todos/today` | 6 * |
 | GET | `/api/v1/todos/{id}` | 1-5 * |
 | PUT | `/api/v1/todos/{id}` | 1-5 * |
 | PATCH | `/api/v1/todos/{id}` | 4-5 * |
 | DELETE | `/api/v1/todos/{id}` | 1-5 * |
-| GET | `/health` | 3-5 |
-| GET | `/` | 3-5 |
+| GET | `/health` | 3-6 |
+| GET | `/` | 3-6 |
 
 `*` From Cấp 5+, requires `Authorization: Bearer {token}`
 
@@ -215,7 +245,17 @@ curl -H "Authorization: Bearer $TOKEN_B" \
 - [x] Password hashing with bcrypt/pbkdf2
 - **Tests**: **10 (auth) + 5 (user ownership) = 15 tests**
 
-### **Total: 30 tests ✅**
+### Cấp 6 (Advanced Features)
+- [x] Due date (deadline) field
+- [x] Tags field (multiple tags per todo)
+- [x] GET /todos/overdue endpoint (list overdue tasks)
+- [x] GET /todos/today endpoint (list today's tasks)
+- [x] Filter by due_date
+- [x] User-scoped overdue/today filtering
+- [x] Update todo with due_date & tags
+- **Tests**: **15 tests** (create with dates/tags, update, overdue, today, sorting, multiple tags)
+
+### **Total: 45 tests ✅** (30 Cấp 1-5 + 15 Cấp 6)
 
 ---
 
@@ -234,6 +274,6 @@ app/
 
 ## 🔗 Files
 
-- [test_todos.py](test_todos.py) - 30 unit tests (all 5 levels)
-- [main.py](main.py) - Entry point
+- [test_todos.py](test_todos.py) - 45 unit tests (30 Cấp 1-5 + 15 Cấp 6 - consolidated)
+- [main.py](main.py) - Entry point  
 - [requirements.txt](requirements.txt) - Dependencies

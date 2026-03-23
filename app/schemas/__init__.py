@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 
 # ===== User Schemas =====
@@ -33,6 +33,8 @@ class TodoBase(BaseModel):
     title: str = Field(..., min_length=3, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     is_done: bool = False
+    due_date: Optional[datetime] = None
+    tags: List[str] = Field(default_factory=list)
 
 
 class TodoCreate(TodoBase):
@@ -43,6 +45,8 @@ class TodoUpdate(BaseModel):
     title: Optional[str] = Field(None, min_length=3, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
     is_done: Optional[bool] = None
+    due_date: Optional[datetime] = None
+    tags: Optional[List[str]] = None
 
 
 class Todo(TodoBase):

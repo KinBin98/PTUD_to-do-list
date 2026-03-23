@@ -1,5 +1,7 @@
 from typing import Optional, List
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
+from datetime import datetime, date
 from app.core.models import Todo, User
 
 
@@ -36,9 +38,17 @@ class TodoRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create(self, title: str, description: Optional[str], is_done: bool, owner_id: int) -> Todo:
+    def create(self, title: str, description: Optional[str], is_done: bool, owner_id: int, 
+               due_date: Optional[datetime] = None, tags: Optional[List[str]] = None) -> Todo:
         """Create a new todo"""
-        db_todo = Todo(title=title, description=description, is_done=is_done, owner_id=owner_id)
+        db_todo = Todo(
+            title=title, 
+            description=description, 
+            is_done=is_done, 
+            owner_id=owner_id,
+            due_date=due_date,
+            tags=tags or []
+        )
         self.db.add(db_todo)
         self.db.commit()
         self.db.refresh(db_todo)
@@ -56,7 +66,8 @@ class TodoRepository:
         ).first()
 
     def update(self, todo_id: int, user_id: int, title: Optional[str] = None, 
-               description: Optional[str] = None, is_done: Optional[bool] = None) -> Optional[Todo]:
+               description: Optional[str] = None, is_done: Optional[bool] = None,
+               due_date: Optional[datetime] = None, tags: Optional[List[str]] = None) -> Optional[Todo]:
         """Update a todo (check ownership)"""
         db_todo = self.get_by_id(todo_id, user_id)
         if not db_todo:
@@ -67,6 +78,10 @@ class TodoRepository:
             db_todo.description = description
         if is_done is not None:
             db_todo.is_done = is_done
+        if due_date is not None:
+            db_todo.due_date = due_date
+        if tags is not None:
+            db_todo.tags = tags
         self.db.commit()
         self.db.refresh(db_todo)
         return db_todo
@@ -115,3 +130,29 @@ class TodoRepository:
         items = query.limit(limit).offset(offset).all()
 
         return items, total
+
+    def get_overdue(self, user_id: int) -> List[Todo]:
+        """Get overdue todos (due_date < today) and not done"""
+        today = datetime.now().date()
+        return self.db.query(Todo).filter(
+            and_(
+                Todo.owner_id == user_id,
+                Todo.due_date < datetime.combine(today, datetime.min.time()),
+                Todo.is_done == False
+            )
+        ).order_by(Todo.due_date).all()
+
+    def get_today(self, user_id: int) -> List[Todo]:
+        """Get todos due today and not done"""
+        today = datetime.now().date()
+        tomorrow = datetime.combine(today, datetime.min.time())
+        end_of_today = datetime.combine(today, datetime.max.time())
+        
+        return self.db.query(Todo).filter(
+            and_(
+                Todo.owner_id == user_id,
+                Todo.due_date >= tomorrow,
+                Todo.due_date <= end_of_today,
+                Todo.is_done == False
+            )
+        ).order_by(Todo.due_date).all()

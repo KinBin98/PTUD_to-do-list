@@ -1,9 +1,10 @@
 """
-Test suite for To-Do List API (Levels 2-5)
-Tests validation, filtering/sorting/pagination, layered architecture, database operations, and authentication
+Test suite for To-Do List API (Levels 2-6)
+Tests validation, filtering/sorting/pagination, layered architecture, database operations, authentication, and Level 6 advanced features
 """
 
 import pytest
+from datetime import datetime, timedelta
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -510,6 +511,249 @@ class TestUserOwnership:
         assert user.hashed_password != "testpass123"
         assert len(user.hashed_password) > 20  # bcrypt hashes are long
         db.close()
+
+
+# ===== Cấp 6 - Advanced Features (Due Date, Tags, Overdue/Today) =====
+class TestLevel6Advanced:
+    """Test Level 6 - Advanced Features (due_date, tags, overdue/today)"""
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self):
+        """Setup clean database"""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        self.user, self.token = create_test_user()
+        self.headers = get_auth_header(self.token)
+
+    def test_create_todo_with_due_date(self):
+        """Test creating todo with due_date"""
+        tomorrow = (datetime.now() + timedelta(days=1)).isoformat()
+        response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Future Task", "due_date": tomorrow}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == "Future Task"
+        assert data["due_date"] is not None
+
+    def test_create_todo_with_tags(self):
+        """Test creating todo with tags"""
+        response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Tagged Task", "tags": ["work", "urgent"]}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == "Tagged Task"
+        assert "work" in data["tags"]
+        assert "urgent" in data["tags"]
+
+    def test_create_todo_with_due_date_and_tags(self):
+        """Test creating todo with both due_date and tags"""
+        tomorrow = (datetime.now() + timedelta(days=1)).isoformat()
+        response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Complete Task", "due_date": tomorrow, "tags": ["work", "important"]}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["title"] == "Complete Task"
+        assert data["due_date"] is not None
+        assert len(data["tags"]) == 2
+
+    def test_update_todo_due_date(self):
+        """Test updating todo due_date"""
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Task to Update"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        tomorrow = (datetime.now() + timedelta(days=1)).isoformat()
+        update_response = client.patch(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers,
+            json={"due_date": tomorrow}
+        )
+        assert update_response.status_code == 200
+        assert update_response.json()["due_date"] is not None
+
+    def test_update_todo_tags(self):
+        """Test updating todo tags"""
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Task to Tag"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        update_response = client.patch(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers,
+            json={"tags": ["personal", "shopping"]}
+        )
+        assert update_response.status_code == 200
+        assert "personal" in update_response.json()["tags"]
+
+    def test_get_overdue_todos_requires_auth(self):
+        """Test that /overdue endpoint requires authentication"""
+        response = client.get("/api/v1/todos/overdue")
+        assert response.status_code == 401
+
+    def test_get_overdue_empty_list(self):
+        """Test getting overdue todos when list is empty"""
+        response = client.get(
+            "/api/v1/todos/overdue",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 0
+
+    def test_get_overdue_with_past_due_todos(self):
+        """Test getting overdue todos with past due date"""
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        # Create overdue todo
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Overdue Task", "due_date": yesterday}
+        )
+        
+        response = client.get(
+            "/api/v1/todos/overdue",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Overdue Task"
+
+    def test_get_overdue_ignores_completed_todos(self):
+        """Test that get_overdue ignores completed todos"""
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Completed Overdue", "due_date": yesterday}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Mark as done
+        client.patch(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers,
+            json={"is_done": True}
+        )
+        
+        # Should not appear in overdue
+        response = client.get(
+            "/api/v1/todos/overdue",
+            headers=self.headers
+        )
+        data = response.json()
+        assert len(data) == 0
+
+    def test_get_overdue_sorted_by_due_date(self):
+        """Test that overdue todos are sorted by due_date ascending"""
+        three_days_ago = (datetime.now() - timedelta(days=3)).isoformat()
+        one_day_ago = (datetime.now() - timedelta(days=1)).isoformat()
+        
+        # Create todos in non-sorted order
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Task 1", "due_date": one_day_ago}
+        )
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Task 2", "due_date": three_days_ago}
+        )
+        
+        response = client.get(
+            "/api/v1/todos/overdue",
+            headers=self.headers
+        )
+        data = response.json()
+        assert len(data) == 2
+        assert data[0]["title"] == "Task 2"  # 3 days ago comes first
+        assert data[1]["title"] == "Task 1"  # 1 day ago comes second
+
+    def test_get_today_todos_requires_auth(self):
+        """Test that /today endpoint requires authentication"""
+        response = client.get("/api/v1/todos/today")
+        assert response.status_code == 401
+
+    def test_get_today_empty_list(self):
+        """Test getting today's todos when list is empty"""
+        response = client.get(
+            "/api/v1/todos/today",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 0
+
+    def test_get_today_with_today_todos(self):
+        """Test getting todos due today"""
+        today = datetime.now().isoformat()
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Today's Task", "due_date": today}
+        )
+        
+        response = client.get(
+            "/api/v1/todos/today",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Today's Task"
+
+    def test_get_today_ignores_completed_todos(self):
+        """Test that get_today ignores completed todos"""
+        today = datetime.now().isoformat()
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Completed Today", "due_date": today}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Mark as done
+        client.patch(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers,
+            json={"is_done": True}
+        )
+        
+        # Should not appear in today's list
+        response = client.get(
+            "/api/v1/todos/today",
+            headers=self.headers
+        )
+        data = response.json()
+        assert len(data) == 0
+
+    def test_todo_tags_support_multiple_values(self):
+        """Test that tags can store multiple values"""
+        response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Multi Tag Task", "tags": ["work", "urgent", "important", "review"]}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["tags"]) == 4
+        assert all(tag in data["tags"] for tag in ["work", "urgent", "important", "review"])
 
 
 if __name__ == "__main__":

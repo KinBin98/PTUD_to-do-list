@@ -115,7 +115,7 @@ def create_todo(
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    result = service.create_todo(todo.title, todo.description, todo.is_done, user_id)
+    result = service.create_todo(todo.title, todo.description, todo.is_done, user_id, todo.due_date, todo.tags)
     return result
 
 
@@ -148,6 +148,60 @@ def get_todos(
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
     return service.get_todos(user_id, q, is_done, sort, limit, offset)
+
+
+@todos_router.get("/overdue", response_model=list[Todo])
+def get_overdue_todos(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Get overdue todos (due_date < today, not done)"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    service = TodoService(db)
+    auth_service = AuthService(db)
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    
+    user_id = auth_service.verify_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    todos = service.get_overdue_todos(user_id)
+    return todos
+
+
+@todos_router.get("/today", response_model=list[Todo])
+def get_today_todos(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Get todos due today (not done)"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    service = TodoService(db)
+    auth_service = AuthService(db)
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    
+    user_id = auth_service.verify_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    todos = service.get_today_todos(user_id)
+    return todos
 
 
 @todos_router.get("/{todo_id}", response_model=Todo)
@@ -205,7 +259,7 @@ def update_todo(
     if user_id is None:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     
-    result = service.update_todo(todo_id, user_id, todo.title, todo.description, todo.is_done)
+    result = service.update_todo(todo_id, user_id, todo.title, todo.description, todo.is_done, todo.due_date, todo.tags)
     if not result:
         raise HTTPException(status_code=404, detail="Todo not found")
     return result
@@ -241,7 +295,9 @@ def partial_update_todo(
         user_id,
         title=todo.title,
         description=todo.description,
-        is_done=todo.is_done
+        is_done=todo.is_done,
+        due_date=todo.due_date,
+        tags=todo.tags
     )
     if not result:
         raise HTTPException(status_code=404, detail="Todo not found")

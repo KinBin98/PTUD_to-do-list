@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
@@ -75,9 +75,10 @@ class TodoService:
         self.repository = TodoRepository(db)
         self.db = db
 
-    def create_todo(self, title: str, description: Optional[str], is_done: bool, user_id: int):
+    def create_todo(self, title: str, description: Optional[str], is_done: bool, user_id: int,
+                    due_date: Optional[datetime] = None, tags: Optional[List[str]] = None):
         """Create a new todo"""
-        todo = self.repository.create(title, description, is_done, user_id)
+        todo = self.repository.create(title, description, is_done, user_id, due_date, tags)
         return todo
 
     def get_todos(
@@ -104,10 +105,19 @@ class TodoService:
         return self.repository.get_by_id(todo_id, user_id)
 
     def update_todo(self, todo_id: int, user_id: int, title: Optional[str] = None, 
-                    description: Optional[str] = None, is_done: Optional[bool] = None):
+                    description: Optional[str] = None, is_done: Optional[bool] = None,
+                    due_date: Optional[datetime] = None, tags: Optional[List[str]] = None):
         """Update a todo"""
-        return self.repository.update(todo_id, user_id, title, description, is_done)
+        return self.repository.update(todo_id, user_id, title, description, is_done, due_date, tags)
 
     def delete_todo(self, todo_id: int, user_id: int) -> bool:
         """Delete a todo"""
         return self.repository.delete(todo_id, user_id)
+
+    def get_overdue_todos(self, user_id: int) -> List:
+        """Get overdue todos"""
+        return self.repository.get_overdue(user_id)
+
+    def get_today_todos(self, user_id: int) -> List:
+        """Get todos due today"""
+        return self.repository.get_today(user_id)
