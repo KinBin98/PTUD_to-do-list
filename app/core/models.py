@@ -13,6 +13,3 @@ class Todo(Base):
     is_done = Column(Boolean, default=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    class Config:
-        from_attributes = True
