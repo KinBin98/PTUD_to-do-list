@@ -28,6 +28,7 @@ class Todo(Base):
     is_done = Column(Boolean, default=False)
     due_date = Column(DateTime, nullable=True)  # Optional deadline
     tags = Column(JSON, default=list, nullable=False)  # List of tags: ["work", "urgent"]
+    deleted_at = Column(DateTime, nullable=True)  # Soft delete timestamp
     owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

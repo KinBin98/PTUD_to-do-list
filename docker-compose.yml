@@ -1,0 +1,64 @@
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: todo_db
+    environment:
+      POSTGRES_USER: todo_user
+      POSTGRES_PASSWORD: todo_password_123
+      POSTGRES_DB: todo_db
+      POSTGRES_INITDB_ARGS: "-c timezone=UTC"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U todo_user -d todo_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - todo_network
+
+  # FastAPI Application
+  api:
+    build: .
+    container_name: todo_api
+    environment:
+      DATABASE_URL: postgresql://todo_user:todo_password_123@db:5432/todo_db
+      SQLALCHEMY_ECHO: 'false'
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    networks:
+      - todo_network
+    restart: unless-stopped
+
+  # pgAdmin (Optional - Database Admin Tool)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin_password
+    ports:
+      - "5050:80"
+    depends_on:
+      - db
+    networks:
+      - todo_network
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  todo_network:
+    driver: bridge

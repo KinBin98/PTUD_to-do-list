@@ -33,7 +33,7 @@ class UserRepository:
 
 
 class TodoRepository:
-    """Repository for managing todos with SQLAlchemy"""
+    """Repository for managing todos with SQLAlchemy - supports soft delete"""
 
     def __init__(self, db: Session):
         self.db = db
@@ -55,20 +55,24 @@ class TodoRepository:
         return db_todo
 
     def get_all(self, user_id: int) -> List[Todo]:
-        """Get all todos for a user"""
-        return self.db.query(Todo).filter(Todo.owner_id == user_id).all()
+        """Get all non-deleted todos for a user"""
+        return self.db.query(Todo).filter(
+            Todo.owner_id == user_id,
+            Todo.deleted_at == None
+        ).all()
 
     def get_by_id(self, todo_id: int, user_id: int) -> Optional[Todo]:
-        """Get a todo by ID (check ownership)"""
+        """Get a non-deleted todo by ID (check ownership)"""
         return self.db.query(Todo).filter(
             Todo.id == todo_id,
-            Todo.owner_id == user_id
+            Todo.owner_id == user_id,
+            Todo.deleted_at == None
         ).first()
 
     def update(self, todo_id: int, user_id: int, title: Optional[str] = None, 
                description: Optional[str] = None, is_done: Optional[bool] = None,
                due_date: Optional[datetime] = None, tags: Optional[List[str]] = None) -> Optional[Todo]:
-        """Update a todo (check ownership)"""
+        """Update a non-deleted todo (check ownership)"""
         db_todo = self.get_by_id(todo_id, user_id)
         if not db_todo:
             return None
@@ -87,13 +91,47 @@ class TodoRepository:
         return db_todo
 
     def delete(self, todo_id: int, user_id: int) -> bool:
-        """Delete a todo (check ownership)"""
+        """Soft delete a todo (set deleted_at timestamp, check ownership)"""
         db_todo = self.get_by_id(todo_id, user_id)
+        if not db_todo:
+            return False
+        db_todo.deleted_at = datetime.now()
+        self.db.commit()
+        return True
+
+    def restore(self, todo_id: int, user_id: int) -> Optional[Todo]:
+        """Restore a soft-deleted todo (clear deleted_at timestamp)"""
+        # Query including deleted todos
+        db_todo = self.db.query(Todo).filter(
+            Todo.id == todo_id,
+            Todo.owner_id == user_id,
+            Todo.deleted_at != None
+        ).first()
+        if not db_todo:
+            return None
+        db_todo.deleted_at = None
+        self.db.commit()
+        self.db.refresh(db_todo)
+        return db_todo
+
+    def hard_delete(self, todo_id: int, user_id: int) -> bool:
+        """Permanently delete a todo from database"""
+        db_todo = self.db.query(Todo).filter(
+            Todo.id == todo_id,
+            Todo.owner_id == user_id
+        ).first()
         if not db_todo:
             return False
         self.db.delete(db_todo)
         self.db.commit()
         return True
+
+    def get_deleted(self, user_id: int) -> List[Todo]:
+        """Get soft-deleted todos for a user"""
+        return self.db.query(Todo).filter(
+            Todo.owner_id == user_id,
+            Todo.deleted_at != None
+        ).order_by(Todo.deleted_at.desc()).all()
 
     def get_filtered(
         self,
@@ -104,8 +142,11 @@ class TodoRepository:
         limit: int = 10,
         offset: int = 0
     ):
-        """Get todos for user with filtering, searching, sorting and pagination"""
-        query = self.db.query(Todo).filter(Todo.owner_id == user_id)
+        """Get non-deleted todos for user with filtering, searching, sorting and pagination"""
+        query = self.db.query(Todo).filter(
+            Todo.owner_id == user_id,
+            Todo.deleted_at == None
+        )
 
         # Filter by is_done
         if is_done is not None:
@@ -132,18 +173,19 @@ class TodoRepository:
         return items, total
 
     def get_overdue(self, user_id: int) -> List[Todo]:
-        """Get overdue todos (due_date < today) and not done"""
+        """Get overdue non-deleted todos (due_date < today) and not done"""
         today = datetime.now().date()
         return self.db.query(Todo).filter(
             and_(
                 Todo.owner_id == user_id,
                 Todo.due_date < datetime.combine(today, datetime.min.time()),
-                Todo.is_done == False
+                Todo.is_done == False,
+                Todo.deleted_at == None
             )
         ).order_by(Todo.due_date).all()
 
     def get_today(self, user_id: int) -> List[Todo]:
-        """Get todos due today and not done"""
+        """Get non-deleted todos due today and not done"""
         today = datetime.now().date()
         tomorrow = datetime.combine(today, datetime.min.time())
         end_of_today = datetime.combine(today, datetime.max.time())
@@ -153,6 +195,7 @@ class TodoRepository:
                 Todo.owner_id == user_id,
                 Todo.due_date >= tomorrow,
                 Todo.due_date <= end_of_today,
-                Todo.is_done == False
+                Todo.is_done == False,
+                Todo.deleted_at == None
             )
         ).order_by(Todo.due_date).all()

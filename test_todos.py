@@ -756,5 +756,237 @@ class TestLevel6Advanced:
         assert all(tag in data["tags"] for tag in ["work", "urgent", "important", "review"])
 
 
+# ===== Cấp 8 - Soft Delete Tests =====
+class TestLevel8SoftDelete:
+    """Test Level 8 - Soft Delete (deleted_at field)"""
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self):
+        """Setup clean database"""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        self.user, self.token = create_test_user()
+        self.headers = get_auth_header(self.token)
+
+    def test_soft_delete_sets_deleted_at(self):
+        """Test that DELETE endpoint performs soft delete (sets deleted_at)"""
+        # Create a todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Todo to Delete"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Delete it (soft delete)
+        delete_response = client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        assert delete_response.status_code == 200
+        
+        # Verify deleted_at is set
+        get_response = client.get(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        assert get_response.status_code == 404  # Should not be found (soft deleted)
+
+    def test_soft_deleted_todo_not_in_list(self):
+        """Test that soft-deleted todos don't appear in normal list"""
+        # Create two todos
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Active Todo"}
+        )
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Todo to Delete"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Delete one
+        client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        
+        # List should only show active todo
+        list_response = client.get(
+            "/api/v1/todos",
+            headers=self.headers
+        )
+        assert list_response.status_code == 200
+        assert list_response.json()["total"] == 1
+        assert list_response.json()["items"][0]["title"] == "Active Todo"
+
+    def test_get_deleted_todos_endpoint(self):
+        """Test GET /todos/deleted returns soft-deleted todos"""
+        # Create a todo and delete it
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Deleted Todo"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        
+        # Get deleted todos
+        response = client.get(
+            "/api/v1/todos/deleted",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 1
+        assert data[0]["title"] == "Deleted Todo"
+        assert data[0]["deleted_at"] is not None
+
+    def test_get_deleted_todos_requires_auth(self):
+        """Test that /deleted endpoint requires authentication"""
+        response = client.get("/api/v1/todos/deleted")
+        assert response.status_code == 401
+
+    def test_get_deleted_todos_empty_list(self):
+        """Test getting deleted todos when list is empty"""
+        response = client.get(
+            "/api/v1/todos/deleted",
+            headers=self.headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data) == 0
+
+    def test_restore_deleted_todo(self):
+        """Test restoring a soft-deleted todo"""
+        # Create and delete a todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Todo to Restore"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        
+        # Restore it
+        restore_response = client.post(
+            f"/api/v1/todos/{todo_id}/restore",
+            headers=self.headers
+        )
+        assert restore_response.status_code == 200
+        assert restore_response.json()["title"] == "Todo to Restore"
+        assert restore_response.json()["deleted_at"] is None
+
+    def test_restore_nonexistent_deleted_todo(self):
+        """Test restoring a non-existent deleted todo returns 404"""
+        response = client.post(
+            "/api/v1/todos/99999/restore",
+            headers=self.headers
+        )
+        assert response.status_code == 404
+
+    def test_restored_todo_appears_in_list(self):
+        """Test that restored todo appears in main list"""
+        # Create, delete, restore
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Todo to Restore"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        client.delete(f"/api/v1/todos/{todo_id}", headers=self.headers)
+        client.post(f"/api/v1/todos/{todo_id}/restore", headers=self.headers)
+        
+        # Should appear in list now
+        list_response = client.get(
+            "/api/v1/todos",
+            headers=self.headers
+        )
+        assert list_response.json()["total"] == 1
+        assert list_response.json()["items"][0]["title"] == "Todo to Restore"
+
+    def test_soft_deleted_todos_not_in_overdue(self):
+        """Test that soft-deleted todos don't appear in overdue list"""
+        yesterday = (datetime.now() - timedelta(days=1)).isoformat()
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Overdue Todo", "due_date": yesterday}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Delete it
+        client.delete(f"/api/v1/todos/{todo_id}", headers=self.headers)
+        
+        # Should not appear in overdue
+        response = client.get(
+            "/api/v1/todos/overdue",
+            headers=self.headers
+        )
+        assert len(response.json()) == 0
+
+    def test_soft_deleted_todos_not_in_today(self):
+        """Test that soft-deleted todos don't appear in today's list"""
+        today = datetime.now().isoformat()
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "Today Todo", "due_date": today}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # Delete it
+        client.delete(f"/api/v1/todos/{todo_id}", headers=self.headers)
+        
+        # Should not appear in today's list
+        response = client.get(
+            "/api/v1/todos/today",
+            headers=self.headers
+        )
+        assert len(response.json()) == 0
+
+    def test_restore_requires_auth(self):
+        """Test that /restore endpoint requires authentication"""
+        response = client.post("/api/v1/todos/1/restore")
+        assert response.status_code == 401
+
+    def test_multiple_users_soft_delete_isolation(self):
+        """Test that deleted todos are user-isolated"""
+        # Create second user
+        user2, token2 = create_test_user("user2@example.com")
+        headers2 = get_auth_header(token2)
+        
+        # User 1 creates and deletes todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers,
+            json={"title": "User1 Todo"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers
+        )
+        
+        # User 2 should not see it in deleted
+        response = client.get(
+            "/api/v1/todos/deleted",
+            headers=headers2
+        )
+        assert len(response.json()) == 0
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

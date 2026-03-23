@@ -111,8 +111,20 @@ class TodoService:
         return self.repository.update(todo_id, user_id, title, description, is_done, due_date, tags)
 
     def delete_todo(self, todo_id: int, user_id: int) -> bool:
-        """Delete a todo"""
+        """Soft delete a todo"""
         return self.repository.delete(todo_id, user_id)
+
+    def restore_todo(self, todo_id: int, user_id: int):
+        """Restore a soft-deleted todo"""
+        return self.repository.restore(todo_id, user_id)
+
+    def hard_delete_todo(self, todo_id: int, user_id: int) -> bool:
+        """Permanently delete a todo"""
+        return self.repository.hard_delete(todo_id, user_id)
+
+    def get_deleted_todos(self, user_id: int) -> List:
+        """Get soft-deleted todos"""
+        return self.repository.get_deleted(user_id)
 
     def get_overdue_todos(self, user_id: int) -> List:
         """Get overdue todos"""

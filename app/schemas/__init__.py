@@ -52,6 +52,7 @@ class TodoUpdate(BaseModel):
 class Todo(TodoBase):
     id: int
     owner_id: int
+    deleted_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 

@@ -204,6 +204,63 @@ def get_today_todos(
     return todos
 
 
+@todos_router.get("/deleted", response_model=list[Todo])
+def get_deleted_todos(
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Get soft-deleted todos (Cấp 8 - Soft Delete)"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    service = TodoService(db)
+    auth_service = AuthService(db)
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    
+    user_id = auth_service.verify_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    todos = service.get_deleted_todos(user_id)
+    return todos
+
+
+@todos_router.post("/{todo_id}/restore", response_model=Todo)
+def restore_todo(
+    todo_id: int,
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db)
+):
+    """Restore a soft-deleted todo (Cấp 8 - Soft Delete)"""
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    service = TodoService(db)
+    auth_service = AuthService(db)
+    
+    try:
+        scheme, token = authorization.split()
+        if scheme.lower() != "bearer":
+            raise HTTPException(status_code=401, detail="Invalid authentication scheme")
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid authorization header")
+    
+    user_id = auth_service.verify_token(token)
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    
+    restored = service.restore_todo(todo_id, user_id)
+    if not restored:
+        raise HTTPException(status_code=404, detail="Deleted todo not found")
+    return restored
+
+
 @todos_router.get("/{todo_id}", response_model=Todo)
 def get_todo(
     todo_id: int,
