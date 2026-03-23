@@ -2,7 +2,7 @@
 
 API quản lý công việc xây dựng theo **5 cấp độ** từ cơ bản đến nâng cao.
 
-> **Status**: ✅ Hoàn tất Cấp 1-4 | **34 tests** | **0 warnings** | 📋 Cấp 5 (Roadmap)
+> **Status**: ✅ Hoàn tất Cấp 1-5 | **30 tests** | **0 warnings**
 
 ---
 
@@ -14,7 +14,7 @@ API quản lý công việc xây dựng theo **5 cấp độ** từ cơ bản đ
 | **2** | Validation + Query | Validate, filter, search, sort, pagination | ✓ |
 | **3** | Layered Architecture | Router/Service/Repository, config, clean code | ✓ |
 | **4** | Database + ORM | SQLAlchemy, SQLite, timestamps, PATCH | ✓ |
-| **5** | Authentication | JWT, multi-user, todo ownership | 📋 |
+| **5** | Authentication | JWT, multi-user, todo ownership | ✓ |
 
 ---
 
@@ -38,21 +38,22 @@ uvicorn main:app --reload
 ### **Unit Tests (Khuyến nghị)** ⭐
 
 ```bash
-# Chạy tất cả 34 tests
+# Chạy tất cả 30 tests
 pytest test_todos.py -v
 
 # Chạy theo cấp độ
-pytest test_todos.py::TestValidation -v          # Cấp 2: Validation (9 tests)
-pytest test_todos.py::TestFilterSearchSort -v    # Cấp 2: Filter/Sort/Pagination (12 tests)
-pytest test_todos.py::TestLayeredArchitecture -v # Cấp 3: Architecture (5 tests)
-pytest test_todos.py::TestDatabase -v            # Cấp 4: Database (10+ tests)
+pytest test_todos.py::TestAuthentication -v         # Cấp 5: Auth (10 tests)
+pytest test_todos.py::TestValidation -v             # Cấp 2: Validation (4 tests)
+pytest test_todos.py::TestFilterSearchSort -v        # Cấp 2: Filter/Sort (5 tests)
+pytest test_todos.py::TestDatabase -v               # Cấp 4: Database (6 tests)
+pytest test_todos.py::TestUserOwnership -v          # Cấp 5: User Isolation (5 tests)
 
 # Chi tiết
 pytest test_todos.py -vv
-pytest test_todos.py::TestValidation::test_title_too_short -v
+pytest test_todos.py::TestAuthentication::test_register_valid -v
 ```
 
-**Result**: ✓ 34/34 PASSED | ~2 seconds
+**Result**: ✓ 30/30 PASSED | ~3 seconds
 
 ---
 
@@ -110,6 +111,38 @@ curl -X PATCH http://localhost:8000/api/v1/todos/1 \
 curl http://localhost:8000/api/v1/todos/1 | jq '.created_at, .updated_at'
 ```
 
+**Cấp 5 - Authentication & Multi-User**
+```bash
+# Register user
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user1@example.com", "password": "securepass123"}'
+
+# Login and get token
+TOKEN=$(curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user1@example.com", "password": "securepass123"}' \
+  | jq -r '.access_token')
+
+# Get current user info
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/auth/me
+
+# Create todo with authentication
+curl -X POST http://localhost:8000/api/v1/todos \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "My Task"}'
+
+# Get user's todos (isolated view)
+curl -H "Authorization: Bearer $TOKEN" \
+  http://localhost:8000/api/v1/todos
+
+# User A cannot access User B's todos (returns 404)
+curl -H "Authorization: Bearer $TOKEN_B" \
+  http://localhost:8000/api/v1/todos/1  # Created by User A
+```
+
 ---
 
 ## 📋 Validation Rules
@@ -128,14 +161,19 @@ curl http://localhost:8000/api/v1/todos/1 | jq '.created_at, .updated_at'
 
 | Method | Endpoint | Cấp |
 |--------|----------|-----|
-| POST | `/api/v1/todos` | 1-4 |
-| GET | `/api/v1/todos` | 2-4 |
-| GET | `/api/v1/todos/{id}` | 1-4 |
-| PUT | `/api/v1/todos/{id}` | 1-4 |
-| PATCH | `/api/v1/todos/{id}` | 4 |
-| DELETE | `/api/v1/todos/{id}` | 1-4 |
-| GET | `/health` | 3-4 |
-| GET | `/` | 3-4 |
+| POST | `/api/v1/auth/register` | 5 |
+| POST | `/api/v1/auth/login` | 5 |
+| GET | `/api/v1/auth/me` | 5 |
+| POST | `/api/v1/todos` | 1-5 * |
+| GET | `/api/v1/todos` | 2-5 * |
+| GET | `/api/v1/todos/{id}` | 1-5 * |
+| PUT | `/api/v1/todos/{id}` | 1-5 * |
+| PATCH | `/api/v1/todos/{id}` | 4-5 * |
+| DELETE | `/api/v1/todos/{id}` | 1-5 * |
+| GET | `/health` | 3-5 |
+| GET | `/` | 3-5 |
+
+`*` From Cấp 5+, requires `Authorization: Bearer {token}`
 
 ---
 
@@ -165,9 +203,19 @@ curl http://localhost:8000/api/v1/todos/1 | jq '.created_at, .updated_at'
 - [x] PATCH partial update
 - [x] Pagination from DB
 - [x] 404 error handling
-- **Tests**: **10+ tests**
+- **Tests**: **6 tests**
 
-### **Total: 34 tests ✅**
+### Cấp 5 (Authentication + Multi-User)
+- [x] User registration (email validation, password hashing)
+- [x] User login (credentials validation)
+- [x] JWT token generation & validation
+- [x] Bearer token authorization on todo endpoints
+- [x] User isolation (todos filtered by owner_id)
+- [x] Cross-user access prevention
+- [x] Password hashing with bcrypt/pbkdf2
+- **Tests**: **10 (auth) + 5 (user ownership) = 15 tests**
+
+### **Total: 30 tests ✅**
 
 ---
 
@@ -186,6 +234,6 @@ app/
 
 ## 🔗 Files
 
-- [test_todos.py](test_todos.py) - 34 unit tests
+- [test_todos.py](test_todos.py) - 30 unit tests (all 5 levels)
 - [main.py](main.py) - Entry point
 - [requirements.txt](requirements.txt) - Dependencies

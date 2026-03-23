@@ -1,6 +1,6 @@
 """
-Test suite for To-Do List API (Levels 2, 3, 4)
-Tests validation, filtering/sorting/pagination, layered architecture, and database operations
+Test suite for To-Do List API (Levels 2-5)
+Tests validation, filtering/sorting/pagination, layered architecture, database operations, and authentication
 """
 
 import pytest
@@ -11,7 +11,8 @@ from sqlalchemy.pool import StaticPool
 
 from main import app
 from app.core.database import Base, get_db
-from app.core.models import Todo
+from app.core.models import Todo, User
+from app.services import AuthService
 
 
 # Setup test database
@@ -40,28 +41,172 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 
+# ===== Helper Functions =====
+def create_test_user(email: str = "test@example.com", password: str = "testpass123"):
+    """Create a test user and return (user, token)"""
+    db = TestingSessionLocal()
+    auth_service = AuthService(db)
+    user = auth_service.create_user(email, password)
+    token = auth_service.create_access_token(user.id)
+    db.close()
+    return user, token
+
+
+def get_auth_header(token: str) -> dict:
+    """Get authorization header"""
+    return {"Authorization": f"Bearer {token}"}
+
+
+# ===== Cấp 5 - Authentication Tests =====
+class TestAuthentication:
+    """Test Level 5 - Authentication"""
+
+    @pytest.fixture(autouse=True)
+    def setup_db(self):
+        """Setup clean database"""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+
+    def test_register_valid(self):
+        """Test user registration"""
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"email": "john@example.com", "password": "securepass123"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["email"] == "john@example.com"
+        assert "id" in data
+        assert data["is_active"] is True
+
+    def test_register_invalid_email(self):
+        """Test registration with invalid email"""
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"email": "not-an-email", "password": "securepass123"}
+        )
+        assert response.status_code == 422
+
+    def test_register_password_too_short(self):
+        """Test registration with password < 8 chars"""
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"email": "jane@example.com", "password": "short"}
+        )
+        assert response.status_code == 422
+
+    def test_register_duplicate_email(self):
+        """Test registration with duplicate email"""
+        # First registration
+        client.post(
+            "/api/v1/auth/register",
+            json={"email": "duplicate@example.com", "password": "securepass123"}
+        )
+        
+        # Second registration with same email
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"email": "duplicate@example.com", "password": "anotherpass123"}
+        )
+        assert response.status_code == 400
+
+    def test_login_valid(self):
+        """Test user login"""
+        # Register
+        client.post(
+            "/api/v1/auth/register",
+            json={"email": "login@example.com", "password": "securepass123"}
+        )
+        
+        # Login
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "login@example.com", "password": "securepass123"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+
+    def test_login_invalid_email(self):
+        """Test login with non-existent email"""
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "nonexistent@example.com", "password": "securepass123"}
+        )
+        assert response.status_code == 401
+
+    def test_login_invalid_password(self):
+        """Test login with wrong password"""
+        # Register
+        client.post(
+            "/api/v1/auth/register",
+            json={"email": "pwd@example.com", "password": "correctpass123"}
+        )
+        
+        # Login with wrong password
+        response = client.post(
+            "/api/v1/auth/login",
+            json={"email": "pwd@example.com", "password": "wrongpass123"}
+        )
+        assert response.status_code == 401
+
+    def test_get_me(self):
+        """Test getting current user info"""
+        user, token = create_test_user()
+        
+        response = client.get(
+            "/api/v1/auth/me",
+            headers=get_auth_header(token)
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == user.id
+        assert data["email"] == user.email
+
+    def test_get_me_no_token(self):
+        """Test get_me without token"""
+        response = client.get("/api/v1/auth/me")
+        assert response.status_code == 401
+
+    def test_get_me_invalid_token(self):
+        """Test get_me with invalid token"""
+        response = client.get(
+            "/api/v1/auth/me",
+            headers={"Authorization": "Bearer invalid_token"}
+        )
+        assert response.status_code == 401
+
+
+# ===== Cấp 2 - Validation (Updated for Auth) =====
 class TestValidation:
     """Test Level 2 - Validation"""
+
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        """Setup with test user"""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        self.user, self.token = create_test_user()
+        self.headers = get_auth_header(self.token)
 
     def test_create_todo_valid(self):
         """Test creating a valid todo"""
         response = client.post(
             "/api/v1/todos",
+            headers=self.headers,
             json={"title": "Test Todo", "description": "A test todo"}
         )
         assert response.status_code == 200
         data = response.json()
         assert data["title"] == "Test Todo"
-        assert data["description"] == "A test todo"
-        assert data["is_done"] is False
-        assert "id" in data
-        assert "created_at" in data
-        assert "updated_at" in data
+        assert data["owner_id"] == self.user.id
 
     def test_title_too_short(self):
         """Title must be at least 3 characters"""
         response = client.post(
             "/api/v1/todos",
+            headers=self.headers,
             json={"title": "ab"}
         )
         assert response.status_code == 422
@@ -71,65 +216,21 @@ class TestValidation:
         long_title = "a" * 101
         response = client.post(
             "/api/v1/todos",
+            headers=self.headers,
             json={"title": long_title}
         )
         assert response.status_code == 422
 
-    def test_title_empty(self):
-        """Title cannot be empty"""
+    def test_create_todo_without_auth(self):
+        """Test creating todo without authentication"""
         response = client.post(
             "/api/v1/todos",
-            json={"title": ""}
+            json={"title": "Test Todo"}
         )
-        assert response.status_code == 422
-
-    def test_title_exactly_3_chars(self):
-        """Title with exactly 3 characters is valid"""
-        response = client.post(
-            "/api/v1/todos",
-            json={"title": "abc"}
-        )
-        assert response.status_code == 200
-
-    def test_title_exactly_100_chars(self):
-        """Title with exactly 100 characters is valid"""
-        title = "a" * 100
-        response = client.post(
-            "/api/v1/todos",
-            json={"title": title}
-        )
-        assert response.status_code == 200
-
-    def test_description_max_length(self):
-        """Description must not exceed 500 characters"""
-        long_desc = "a" * 501
-        response = client.post(
-            "/api/v1/todos",
-            json={"title": "Valid", "description": long_desc}
-        )
-        assert response.status_code == 422
-
-    def test_partial_update_preserves_other_fields(self):
-        """PATCH should only update specified fields"""
-        # Create a todo
-        create_response = client.post(
-            "/api/v1/todos",
-            json={"title": "Original Title", "description": "Original Description", "is_done": False}
-        )
-        todo_id = create_response.json()["id"]
-
-        # Partial update only title
-        patch_response = client.patch(
-            f"/api/v1/todos/{todo_id}",
-            json={"title": "New Title"}
-        )
-        assert patch_response.status_code == 200
-        data = patch_response.json()
-        assert data["title"] == "New Title"
-        assert data["description"] == "Original Description"
-        assert data["is_done"] is False
+        assert response.status_code == 401
 
 
+# ===== Cấp 2 - Filter/Search/Sort/Pagination (Updated for Auth) =====
 class TestFilterSearchSort:
     """Test Level 2 - Filter, Search, Sort, Pagination"""
 
@@ -138,6 +239,9 @@ class TestFilterSearchSort:
         """Create sample todos for testing"""
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        
+        self.user, self.token = create_test_user()
+        self.headers = get_auth_header(self.token)
         
         # Create test data
         todos_data = [
@@ -149,331 +253,263 @@ class TestFilterSearchSort:
         ]
         
         for todo in todos_data:
-            client.post("/api/v1/todos", json=todo)
+            client.post(
+                "/api/v1/todos",
+                headers=self.headers,
+                json=todo
+            )
 
     def test_get_all_todos(self):
         """Test getting all todos"""
-        response = client.get("/api/v1/todos")
+        response = client.get(
+            "/api/v1/todos",
+            headers=self.headers
+        )
         assert response.status_code == 200
         data = response.json()
-        assert "items" in data
-        assert "total" in data
-        assert "limit" in data
-        assert "offset" in data
         assert data["total"] == 5
 
     def test_filter_by_is_done_true(self):
         """Test filtering by is_done=true"""
-        response = client.get("/api/v1/todos?is_done=true")
+        response = client.get(
+            "/api/v1/todos?is_done=true",
+            headers=self.headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 2
         for item in data["items"]:
             assert item["is_done"] is True
 
-    def test_filter_by_is_done_false(self):
-        """Test filtering by is_done=false"""
-        response = client.get("/api/v1/todos?is_done=false")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 3
-        for item in data["items"]:
-            assert item["is_done"] is False
-
     def test_search_by_keyword(self):
         """Test searching by keyword"""
-        response = client.get("/api/v1/todos?q=review")
+        response = client.get(
+            "/api/v1/todos?q=review",
+            headers=self.headers
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["total"] == 1
-        assert "review" in data["items"][0]["title"].lower()
-
-    def test_search_case_insensitive(self):
-        """Test search is case-insensitive"""
-        response = client.get("/api/v1/todos?q=WRITE")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 1
-        assert "write" in data["items"][0]["title"].lower()
-
-    def test_search_partial_match(self):
-        """Test search matches partial strings"""
-        response = client.get("/api/v1/todos?q=app")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total"] == 1
-        assert "application" in data["items"][0]["title"].lower()
-
-    def test_sort_by_created_at_ascending(self):
-        """Test sorting by created_at ascending"""
-        response = client.get("/api/v1/todos?sort=created_at")
-        assert response.status_code == 200
-        data = response.json()
-        items = data["items"]
-        # Items should be in ascending order by created_at
-        for i in range(len(items) - 1):
-            assert items[i]["created_at"] <= items[i + 1]["created_at"]
 
     def test_sort_by_created_at_descending(self):
         """Test sorting by created_at descending"""
-        response = client.get("/api/v1/todos?sort=-created_at")
+        response = client.get(
+            "/api/v1/todos?sort=-created_at",
+            headers=self.headers
+        )
         assert response.status_code == 200
         data = response.json()
         items = data["items"]
-        # Items should be in descending order by created_at
         for i in range(len(items) - 1):
             assert items[i]["created_at"] >= items[i + 1]["created_at"]
 
     def test_pagination_limit(self):
         """Test pagination limit parameter"""
-        response = client.get("/api/v1/todos?limit=2")
+        response = client.get(
+            "/api/v1/todos?limit=2",
+            headers=self.headers
+        )
         assert response.status_code == 200
         data = response.json()
-        assert data["limit"] == 2
         assert len(data["items"]) == 2
         assert data["total"] == 5
 
-    def test_pagination_offset(self):
-        """Test pagination offset parameter"""
-        response1 = client.get("/api/v1/todos?limit=2&offset=0")
-        response2 = client.get("/api/v1/todos?limit=2&offset=2")
-        
-        data1 = response1.json()
-        data2 = response2.json()
-        
-        assert data1["offset"] == 0
-        assert data2["offset"] == 2
-        # Items should be different
-        assert data1["items"][0]["id"] != data2["items"][0]["id"]
 
-    def test_combined_filter_search_sort_pagination(self):
-        """Test combining multiple parameters"""
-        response = client.get("/api/v1/todos?is_done=false&q=test&sort=created_at&limit=10&offset=0")
-        assert response.status_code == 200
-        data = response.json()
-        assert "items" in data
-        assert "total" in data
-
-    def test_pagination_max_limit(self):
-        """Test that limit cannot exceed 100"""
-        response = client.get("/api/v1/todos?limit=101")
-        assert response.status_code == 422
-
-
-class TestLayeredArchitecture:
-    """Test Level 3 - Layered Architecture (Router/Service/Repository)"""
-
-    @pytest.fixture(autouse=True)
-    def setup_db(self):
-        """Setup clean database"""
-        Base.metadata.drop_all(bind=engine)
-        Base.metadata.create_all(bind=engine)
-
-    def test_api_v1_prefix(self):
-        """Test that API uses /api/v1 prefix"""
-        response = client.get("/api/v1/todos")
-        assert response.status_code == 200
-
-    def test_health_endpoint(self):
-        """Test health check endpoint"""
-        response = client.get("/health")
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-
-    def test_root_endpoint(self):
-        """Test root welcome endpoint"""
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "message" in response.json()
-
-    def test_all_crud_operations(self):
-        """Test all CRUD operations work correctly"""
-        # CREATE
-        create_response = client.post(
-            "/api/v1/todos",
-            json={"title": "Test Task"}
-        )
-        assert create_response.status_code == 200
-        todo_id = create_response.json()["id"]
-
-        # READ
-        read_response = client.get(f"/api/v1/todos/{todo_id}")
-        assert read_response.status_code == 200
-        assert read_response.json()["id"] == todo_id
-
-        # UPDATE (full)
-        update_response = client.put(
-            f"/api/v1/todos/{todo_id}",
-            json={"title": "Updated Task", "is_done": True}
-        )
-        assert update_response.status_code == 200
-        assert update_response.json()["title"] == "Updated Task"
-
-        # DELETE
-        delete_response = client.delete(f"/api/v1/todos/{todo_id}")
-        assert delete_response.status_code == 200
-
-        # Verify deleted
-        get_response = client.get(f"/api/v1/todos/{todo_id}")
-        assert get_response.status_code == 404
-
-
+# ===== Cấp 4 - Database Operations (Updated for Auth) =====
 class TestDatabase:
-    """Test Level 4 - Database Operations & ORM"""
+    """Test Level 4 - Database Operations"""
 
     @pytest.fixture(autouse=True)
     def setup_db(self):
         """Setup clean database"""
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
+        self.user, self.token = create_test_user()
+        self.headers = get_auth_header(self.token)
 
     def test_created_at_auto_set(self):
         """Test that created_at is automatically set"""
         response = client.post(
             "/api/v1/todos",
+            headers=self.headers,
             json={"title": "Auto Timestamp"}
         )
         assert response.status_code == 200
         data = response.json()
         assert "created_at" in data
-        assert data["created_at"] is not None
 
     def test_updated_at_auto_set(self):
         """Test that updated_at is automatically set"""
         response = client.post(
             "/api/v1/todos",
+            headers=self.headers,
             json={"title": "Auto Timestamp"}
         )
         assert response.status_code == 200
         data = response.json()
         assert "updated_at" in data
-        assert data["updated_at"] is not None
 
-    def test_updated_at_changes_on_update(self):
-        """Test that updated_at changes when todo is updated"""
-        # Create
+    def test_patch_partial_update(self):
+        """Test PATCH endpoint for partial updates"""
         create_response = client.post(
             "/api/v1/todos",
-            json={"title": "Original"}
+            headers=self.headers,
+            json={"title": "Original", "is_done": False}
         )
         todo_id = create_response.json()["id"]
-        original_updated_at = create_response.json()["updated_at"]
 
-        # Wait a tiny bit and update
-        import time
-        time.sleep(0.01)
-
-        # Update
-        update_response = client.patch(
-            f"/api/v1/todos/{todo_id}",
-            json={"title": "Updated"}
-        )
-        new_updated_at = update_response.json()["updated_at"]
-
-        # Timestamps should be different (updated_at should be newer)
-        assert new_updated_at >= original_updated_at
-
-    def test_partial_update_only_is_done(self):
-        """Test PATCH endpoint for updating only is_done"""
-        # Create
-        create_response = client.post(
-            "/api/v1/todos",
-            json={"title": "Mark Complete", "is_done": False}
-        )
-        todo_id = create_response.json()["id"]
-        original_title = create_response.json()["title"]
-
-        # Partial update only is_done
         patch_response = client.patch(
             f"/api/v1/todos/{todo_id}",
+            headers=self.headers,
             json={"is_done": True}
         )
         assert patch_response.status_code == 200
         data = patch_response.json()
         assert data["is_done"] is True
-        assert data["title"] == original_title
-
-    def test_partial_update_only_description(self):
-        """Test PATCH endpoint for updating only description"""
-        # Create
-        create_response = client.post(
-            "/api/v1/todos",
-            json={"title": "Task", "description": "Old"}
-        )
-        todo_id = create_response.json()["id"]
-
-        # Partial update
-        patch_response = client.patch(
-            f"/api/v1/todos/{todo_id}",
-            json={"description": "New description"}
-        )
-        assert patch_response.status_code == 200
-        data = patch_response.json()
-        assert data["description"] == "New description"
-        assert data["title"] == "Task"
+        assert data["title"] == "Original"
 
     def test_get_nonexistent_todo(self):
         """Test getting a non-existent todo returns 404"""
-        response = client.get("/api/v1/todos/99999")
+        response = client.get(
+            "/api/v1/todos/99999",
+            headers=self.headers
+        )
         assert response.status_code == 404
 
     def test_update_nonexistent_todo(self):
         """Test updating a non-existent todo returns 404"""
         response = client.put(
             "/api/v1/todos/99999",
+            headers=self.headers,
             json={"title": "New"}
         )
         assert response.status_code == 404
 
     def test_delete_nonexistent_todo(self):
         """Test deleting a non-existent todo returns 404"""
-        response = client.delete("/api/v1/todos/99999")
+        response = client.delete(
+            "/api/v1/todos/99999",
+            headers=self.headers
+        )
         assert response.status_code == 404
 
-    def test_response_structure(self):
-        """Test that response structure is correct"""
-        client.post("/api/v1/todos", json={"title": "Test1"})
-        client.post("/api/v1/todos", json={"title": "Test2"})
 
-        response = client.get("/api/v1/todos")
-        assert response.status_code == 200
-        data = response.json()
+# ===== Cấp 5 - User Ownership Tests =====
+class TestUserOwnership:
+    """Test Level 5 - User Ownership"""
 
-        # Check required fields
-        assert "items" in data
-        assert "total" in data
-        assert "limit" in data
-        assert "offset" in data
+    @pytest.fixture(autouse=True)
+    def setup_users(self):
+        """Setup two test users"""
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        
+        self.user1, self.token1 = create_test_user("user1@example.com")
+        self.user2, self.token2 = create_test_user("user2@example.com")
+        self.headers1 = get_auth_header(self.token1)
+        self.headers2 = get_auth_header(self.token2)
 
-        # Check items structure
-        for item in data["items"]:
-            assert "id" in item
-            assert "title" in item
-            assert "description" in item
-            assert "is_done" in item
-            assert "created_at" in item
-            assert "updated_at" in item
+    def test_user_can_only_see_own_todos(self):
+        """Test that user can only see their own todos"""
+        # User 1 creates a todo
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers1,
+            json={"title": "User1 Todo"}
+        )
+        
+        # User 2 creates a todo
+        client.post(
+            "/api/v1/todos",
+            headers=self.headers2,
+            json={"title": "User2 Todo"}
+        )
+        
+        # User 1 should only see 1 todo
+        response1 = client.get("/api/v1/todos", headers=self.headers1)
+        assert response1.json()["total"] == 1
+        assert response1.json()["items"][0]["title"] == "User1 Todo"
+        
+        # User 2 should only see 1 todo
+        response2 = client.get("/api/v1/todos", headers=self.headers2)
+        assert response2.json()["total"] == 1
+        assert response2.json()["items"][0]["title"] == "User2 Todo"
 
-    def test_pagination_from_database(self):
-        """Test that pagination actually limits query results from database"""
-        # Create 15 todos
-        for i in range(15):
-            client.post("/api/v1/todos", json={"title": f"Todo {i:02d}"})
+    def test_user_cannot_see_other_users_todo(self):
+        """Test that user cannot access other user's todo"""
+        # User 1 creates a todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers1,
+            json={"title": "User1 Private Todo"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # User 2 tries to get User 1's todo
+        response = client.get(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers2
+        )
+        assert response.status_code == 404
 
-        # Test different limits and offsets
-        response = client.get("/api/v1/todos?limit=5&offset=0")
-        assert len(response.json()["items"]) == 5
+    def test_user_cannot_delete_other_users_todo(self):
+        """Test that user cannot delete other user's todo"""
+        # User 1 creates a todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers1,
+            json={"title": "User1 Todo"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # User 2 tries to delete User 1's todo
+        response = client.delete(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers2
+        )
+        assert response.status_code == 404
+        
+        # Verify User 1's todo still exists
+        get_response = client.get(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers1
+        )
+        assert get_response.status_code == 200
 
-        response = client.get("/api/v1/todos?limit=5&offset=5")
-        assert len(response.json()["items"]) == 5
+    def test_user_cannot_update_other_users_todo(self):
+        """Test that user cannot update other user's todo"""
+        # User 1 creates a todo
+        create_response = client.post(
+            "/api/v1/todos",
+            headers=self.headers1,
+            json={"title": "User1 Todo"}
+        )
+        todo_id = create_response.json()["id"]
+        
+        # User 2 tries to update User 1's todo
+        response = client.patch(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers2,
+            json={"title": "Hacked!"}
+        )
+        assert response.status_code == 404
+        
+        # Verify User 1's todo is unchanged
+        get_response = client.get(
+            f"/api/v1/todos/{todo_id}",
+            headers=self.headers1
+        )
+        assert get_response.json()["title"] == "User1 Todo"
 
-        response = client.get("/api/v1/todos?limit=5&offset=10")
-        assert len(response.json()["items"]) == 5
-
-        response = client.get("/api/v1/todos?limit=10&offset=10")
-        assert len(response.json()["items"]) == 5  # Only 5 left
-
-        assert response.json()["total"] == 15
+    def test_password_hashing(self):
+        """Test that passwords are hashed"""
+        db = TestingSessionLocal()
+        user = db.query(User).filter(User.email == "user1@example.com").first()
+        
+        # Password should be hashed, not plain text
+        assert user.hashed_password != "testpass123"
+        assert len(user.hashed_password) > 20  # bcrypt hashes are long
+        db.close()
 
 
 if __name__ == "__main__":

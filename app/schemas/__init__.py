@@ -1,8 +1,34 @@
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, EmailStr
 from datetime import datetime
 from typing import Optional
 
 
+# ===== User Schemas =====
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8)
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+# ===== Todo Schemas =====
 class TodoBase(BaseModel):
     title: str = Field(..., min_length=3, max_length=100)
     description: Optional[str] = Field(None, max_length=500)
@@ -21,6 +47,7 @@ class TodoUpdate(BaseModel):
 
 class Todo(TodoBase):
     id: int
+    owner_id: int
     created_at: datetime
     updated_at: datetime
 
